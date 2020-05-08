@@ -459,6 +459,7 @@ public class StreamTransferManager {
         if (executorServiceResultsHandler != null) {
             executorServiceResultsHandler.abort();
         }
+        multiPartOutputStreams.forEach(MultiPartOutputStream::abort);
         if (uploadId != null) {
             log.debug("{}: Aborting", this);
             AbortMultipartUploadRequest abortMultipartUploadRequest = new AbortMultipartUploadRequest(

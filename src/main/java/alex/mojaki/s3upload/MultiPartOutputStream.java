@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.OutputStream;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 import static com.amazonaws.services.s3.internal.Constants.MB;
 
@@ -37,6 +38,7 @@ public class MultiPartOutputStream extends OutputStream {
     private final int partNumberEnd;
     private final int partSize;
     private int currentPartNumber;
+    private boolean aborted;
 
     /**
      * Creates a new stream that will produce parts of the given size with part numbers in the given range.
@@ -72,6 +74,7 @@ public class MultiPartOutputStream extends OutputStream {
 
         currentPartNumber = partNumberStart;
         currentStream = new ConvertibleOutputStream(getStreamAllocatedSize());
+        this.aborted = false;
     }
 
     /**
@@ -125,7 +128,8 @@ public class MultiPartOutputStream extends OutputStream {
         StreamPart streamPart = new StreamPart(currentStream, currentPartNumber++);
         log.debug("Putting {} on queue", streamPart);
         try {
-            queue.put(streamPart);
+            tryToPut(streamPart);
+            log.debug("Put done {}", streamPart);
         } catch (InterruptedException e) {
             throw Utils.runtimeInterruptedException(e);
         }
@@ -163,12 +167,28 @@ public class MultiPartOutputStream extends OutputStream {
         try {
             putCurrentStream();
             log.debug("Placing poison pill on queue for {}", this);
-            queue.put(StreamPart.POISON);
+            tryToPut(StreamPart.POISON);
+            log.debug("Done placing poison pill on queue for {}", this);
         } catch (InterruptedException e) {
             log.error("Interrupted while closing {}", this);
             throw Utils.runtimeInterruptedException(e);
         }
         currentStream = null;
+    }
+
+    private void tryToPut(StreamPart streamPart) throws InterruptedException {
+        boolean success = false;
+        while (!success && !aborted) {
+            log.debug("Trying to put part {}.", streamPart);
+            success = queue.offer(streamPart, 5, TimeUnit.SECONDS);
+        }
+        if (aborted) {
+            throw new RuntimeException(String.format("Part upload aborted %s.", streamPart));
+        }
+    }
+
+    public void abort() {
+        this.aborted = true;
     }
 
     @Override
